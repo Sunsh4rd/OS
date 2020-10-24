@@ -20,23 +20,22 @@ typedef struct config_t
 
 typedef bool (*password_handler_t) (config_t * config, char * password);
 
-char * rec (config_t * config, char * password, int pos, password_handler_t password_handler)
+bool rec (config_t * config, char * password, int pos, password_handler_t password_handler)
 {
   int i;
   if ((--pos) < 0)
-    {
-      if (password_handler (config, password))
-	return (password);
-    }
+    return (password_handler (config, password));
   else
     for (i = 0; config -> alph[i]; i++)
       {
 	password[pos] = config -> alph[i];
-	rec (config, password, pos, password_handler);
+	if (rec (config, password, pos, password_handler))
+	  return (true);
       }
+  return (false);
 }
 
-char *  rec_wrapper (config_t * config, char * password, password_handler_t password_handler)
+bool rec_wrapper (config_t * config, char * password, password_handler_t password_handler)
 {
   return rec (config, password, config -> length, password_handler);
 }
@@ -108,9 +107,7 @@ bool print_password (config_t * config, char * password)
 bool check_password (config_t * config, char * password)
 {
   char * hash = crypt (password, config->hash);
-  if (strcmp (config -> hash, hash) == 0)
-    return (true);
-  return (false);
+  return (strcmp (config -> hash, hash) == 0);
 }
 
 int main (int argc, char * argv[])
@@ -126,15 +123,16 @@ int main (int argc, char * argv[])
   parse_paras (&config, argc, argv);
   char password[config.length + 1];
   password[config.length] = '\0';
+
   switch (config.brute_mode)
     {
     case BM_REC:
-      printf("%s\n", rec_wrapper (&config, password, print_password));
+      rec_wrapper (&config, password, check_password);
       break;
     case BM_ITER:
-      printf("%s\n", iter (&config, password, check_password));
+      iter (&config, password, check_password);
       break;
     }
-  
+  printf ("password '%s'\n", password);
   return (0); 
 }
