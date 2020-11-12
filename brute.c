@@ -3,20 +3,46 @@
 #include <stdbool.h>
 #include <string.h>
 #include <unistd.h>
+#include <pthread.h>
+#include <semaphore.h>
 
-typedef enum
-  {
+typedef enum {
    BM_ITER,
    BM_REC,
   } brute_mode_t;
 
-typedef struct config_t
-{
+typedef struct config_t {
   int length;
   char * alph;
   char * hash;
   brute_mode_t brute_mode;
 } config_t;
+
+typedef struct task_t {
+  char password[8];
+} task_t;
+
+typedef struct queue_t {
+  task_t queue[8];
+  int head, tail;
+  pthread_mutex_t head_mutex, tail_mutex;
+  sem_t empty, full;
+} queue_t;
+
+void queue_init (queue_t * queue)
+{
+  
+}
+
+void queue_push (queue_t * queue, task_t * task)
+{
+  //7
+}
+
+void queue_pop (queue_t * queue, task_t * task)
+{
+  //7
+}
 
 typedef bool (*password_handler_t) (config_t * config, char * password);
 
@@ -37,10 +63,10 @@ bool rec (config_t * config, char * password, int pos, password_handler_t passwo
 
 bool rec_wrapper (config_t * config, char * password, password_handler_t password_handler)
 {
-  return rec (config, password, config -> length, password_handler);
+  return (rec (config, password, config -> length, password_handler));
 }
 
-char * iter (config_t *  config, char * password, password_handler_t password_handler)
+bool iter (config_t *  config, char * password, password_handler_t password_handler)
 {
   int alph_size_1 = strlen(config -> alph) - 1;
   int idx[config -> length];
@@ -55,7 +81,7 @@ char * iter (config_t *  config, char * password, password_handler_t password_ha
   for (;;)
     {
       if (password_handler (config, password))
-	return (password);
+	return (true);
       
       for (i = config -> length - 1; (i >= 0) && (idx[i] == alph_size_1); i--)
 	{
@@ -64,7 +90,7 @@ char * iter (config_t *  config, char * password, password_handler_t password_ha
 	}
 
       if (i < 0)
-	return (password);
+	return (false);
       password[i] = config -> alph[++idx[i]];
     }
 }
@@ -106,6 +132,7 @@ bool print_password (config_t * config, char * password)
 
 bool check_password (config_t * config, char * password)
 {
+  return (false);
   char * hash = crypt (password, config->hash);
   return (strcmp (config -> hash, hash) == 0);
 }
@@ -123,16 +150,22 @@ int main (int argc, char * argv[])
   parse_paras (&config, argc, argv);
   char password[config.length + 1];
   password[config.length] = '\0';
-
+  bool tmp = true;
+  
   switch (config.brute_mode)
     {
     case BM_REC:
-      rec_wrapper (&config, password, check_password);
+      tmp = rec_wrapper (&config, password, check_password);
       break;
     case BM_ITER:
-      iter (&config, password, check_password);
+      tmp = iter (&config, password, check_password);
       break;
     }
-  printf ("password '%s'\n", password);
+  if (tmp){
+    printf ("password '%s'\n", password);
+  }
+  else {
+    printf ("0\n");
+  }
   return (0); 
 }
