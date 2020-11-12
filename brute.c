@@ -31,7 +31,7 @@ typedef struct queue_t {
 
 void queue_init (queue_t * queue)
 {
-  
+  //???
 }
 
 void queue_push (queue_t * queue, task_t * task)
