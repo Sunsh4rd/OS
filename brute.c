@@ -36,12 +36,12 @@ void queue_init (queue_t * queue)
 
 void queue_push (queue_t * queue, task_t * task)
 {
-  //7
+  //6+1
 }
 
 void queue_pop (queue_t * queue, task_t * task)
 {
-  //7
+  //6+1
 }
 
 typedef bool (*password_handler_t) (config_t * config, char * password);

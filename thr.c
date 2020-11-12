@@ -7,7 +7,7 @@ void * fun (void * a)
   int i = 0;
   for (;;)
     {
-      sleep (4);
+      sleep (1);
       printf ("%d\n", i++);
     }
 }
