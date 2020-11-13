@@ -161,11 +161,9 @@ int main (int argc, char * argv[])
       tmp = iter (&config, password, check_password);
       break;
     }
-  if (tmp){
+  if (tmp)
     printf ("password '%s'\n", password);
-  }
-  else {
+  else
     printf ("0\n");
-  }
   return (0); 
 }
