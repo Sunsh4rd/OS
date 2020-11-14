@@ -31,17 +31,34 @@ typedef struct queue_t {
 
 void queue_init (queue_t * queue)
 {
-  //??
+  queue -> head = 0;
+  queue -> tail = 0;
+  sem_init (&queue -> empty, 0 , sizeof (queue -> queue) / sizeof (queue -> queue[0]));
+  sem_init (&queue -> full, 0 , 0);
+  pthread_mutex_init (&queue -> head_mutex, NULL);
+  pthread_mutex_init (&queue -> tail_mutex, NULL);
 }
 
 void queue_push (queue_t * queue, task_t * task)
 {
-  //6+1
+  sem_wait (&queue -> empty);
+  pthread_mutex_lock (&queue -> tail_mutex);
+  queue -> queue[queue -> tail] = *task;
+  if (++queue -> tail == sizeof (queue -> queue) / sizeof (queue -> queue[0]))
+    queue -> tail = 0; 
+  pthread_mutex_unlock (&queue -> tail_mutex);
+  sem_post (&queue -> full);
 }
 
 void queue_pop (queue_t * queue, task_t * task)
 {
-  //6+1
+  sem_wait (&queue -> full);
+  pthread_mutex_lock (&queue -> head_mutex);
+  *task = queue -> queue[queue -> head];
+  if (++queue -> head == sizeof (queue -> queue) / sizeof (queue -> queue[0]))
+    queue -> head = 0;
+  pthread_mutex_unlock (&queue -> head_mutex);
+  sem_post (&queue -> empty);
 }
 
 typedef bool (*password_handler_t) (config_t * config, char * password);
@@ -132,7 +149,6 @@ bool print_password (config_t * config, char * password)
 
 bool check_password (config_t * config, char * password)
 {
-  return (false);
   char * hash = crypt (password, config->hash);
   return (strcmp (config -> hash, hash) == 0);
 }
