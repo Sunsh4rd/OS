@@ -9,7 +9,7 @@
 typedef enum {
    BM_ITER,
    BM_REC,
-  } brute_mode_t;
+} brute_mode_t;
 
 typedef struct config_t {
   int length;
