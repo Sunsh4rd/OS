@@ -194,7 +194,7 @@ void * consumer (void * arg)
     {
       task_t task;
       queue_pop (&pc_context->queue, &task);
-      if (check_password (arg, task))
+      if (check_password (arg, &task))
 	break;
     }
 }
