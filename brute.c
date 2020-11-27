@@ -230,8 +230,7 @@ bool run_multi(config_t * config, char * password)
     case BM_ITER:
       iter (config, password, push_to_queue, &pc_context);
       break;
-    }
-  
+    } 
 }
 
 int main (int argc, char * argv[])
