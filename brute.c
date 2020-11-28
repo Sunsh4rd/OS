@@ -40,6 +40,10 @@ typedef struct queue_t {
 typedef struct pc_context_t {
   config_t * config;
   queue_t queue;
+  task_t result;
+  int tiq;
+  pthread_mutex_t tiq_mutex;
+  pthread_cond_t tiq_cond;
 } pc_context_t;
 
 void queue_init (queue_t * queue)
@@ -50,6 +54,7 @@ void queue_init (queue_t * queue)
   sem_init (&queue -> full, 0 , 0);
   pthread_mutex_init (&queue -> head_mutex, NULL);
   pthread_mutex_init (&queue -> tail_mutex, NULL);
+  memset (&queue->queue, 0, sizeof (queue->queue));
 }
 
 void queue_push (queue_t * queue, task_t * task)
@@ -125,7 +130,7 @@ bool iter (config_t *  config, char * password, password_handler_t password_hand
     }
 }
 
-void parse_paras(config_t * config, int argc, char * argv[])
+void parse_paras (config_t * config, int argc, char * argv[])
 {
   int opt;
   brute_mode_t mode;
@@ -185,6 +190,7 @@ bool run_single(config_t * config, char * password)
     case BM_ITER:
       return (iter (config, password, check_password, config));
     }
+  return (false);
 }
 
 void * consumer (void * arg)
@@ -194,8 +200,11 @@ void * consumer (void * arg)
     {
       task_t task;
       queue_pop (&pc_context->queue, &task);
-      if (check_password (arg, &task))
-	break;
+      if (check_password (pc_context->config, task.password))
+	pc_context->result = task;
+      pthread_mutex_lock (&pc_context->tiq_mutex);
+      --pc_context->tiq;
+      pthread_mutex_unlock (&pc_context->tiq_mutex);
     }
 }
 
@@ -204,18 +213,25 @@ bool push_to_queue (void * context, char * password)
   pc_context_t * pc_context = context;
   task_t task;
   strcpy (task.password, password);
+  pthread_mutex_lock (&pc_context->tiq_mutex);
+  ++pc_context->tiq;
+  pthread_mutex_unlock (&pc_context->tiq_mutex);
   queue_push (&pc_context->queue, &task);
-  return (false);
+  return (pc_context->result[0]);
 }
 
-bool run_multi(config_t * config, char * password)
+bool run_multi (config_t * config, char * password)
 {
-  int i, num_cpu = sysconf (_SC_NPROCESSORS_ONLN);
+  int i, num_cpu = 1; //sysconf (_SC_NPROCESSORS_ONLN);
   pc_context_t pc_context;
 
+  pc_context.result[0] = 0;
   pc_context.config = config;
+  pc_context.tiq = 0;
+  pthread_mutex_init (&pc_context.tiq_mutex, NULL);
+  pthread_cond_init (&pc_context.tiq_cond, NULL);
   queue_init (&pc_context.queue);
-
+  
   for (i = 0; i < num_cpu; ++i)
     {
       pthread_t id;
@@ -230,7 +246,10 @@ bool run_multi(config_t * config, char * password)
     case BM_ITER:
       iter (config, password, push_to_queue, &pc_context);
       break;
-    } 
+    }
+  while (pc_context.tiq != 0);
+  printf ("finish\n");
+  return (false);
 }
 
 int main (int argc, char * argv[])
@@ -239,7 +258,7 @@ int main (int argc, char * argv[])
     {
      .brute_mode = BM_ITER,
      .length = 3,
-     .alph = "01",
+     .alph = "0123456789",
      .hash = "wHtCXhpDbCnLI",
      .run_mode = RM_SINGLE,
     };
