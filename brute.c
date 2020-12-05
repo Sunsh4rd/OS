@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <semaphore.h>
+#include <crypt.h>
 
 typedef enum
   {
@@ -45,6 +46,11 @@ typedef struct pc_context_t {
   pthread_mutex_t tiq_mutex;
   pthread_cond_t tiq_cond;
 } pc_context_t;
+
+typedef struct cp_crypt_special{
+  config_t * config;
+  struct crypt_data crypt;
+}cp_crypt_special;
 
 void queue_init (queue_t * queue)
 {
@@ -176,8 +182,10 @@ bool print_password (config_t * config, char * password)
 
 bool check_password (void * context, char * password)
 {
-  config_t * config = context;
-  char * hash = crypt (password, config->hash);
+  cp_crypt_special * cp  = context;
+  config_t * config = cp -> config;
+  struct crypt_data cd = cp -> crypt;
+  char * hash = crypt_r (password, config->hash, &cd);
   return (strcmp (config -> hash, hash) == 0);
 }
 
@@ -196,15 +204,23 @@ bool run_single(config_t * config, char * password)
 void * consumer (void * arg)
 {
   pc_context_t * pc_context = arg;
+  struct crypt_data cd = { .initialized = 0 };
+
   for (;;)
     {
       task_t task;
       queue_pop (&pc_context->queue, &task);
-      if (check_password (pc_context->config, task.password))
+      if (check_password (pc_context->config, task.password)){
 	pc_context->result = task;
+      }
+
       pthread_mutex_lock (&pc_context->tiq_mutex);
       --pc_context->tiq;
       pthread_mutex_unlock (&pc_context->tiq_mutex);
+      
+      if (pc_context-> tiq == 0) {
+	pthread_cond_broadcast (&pc_context -> tiq_cond);
+      }
     }
 }
 
@@ -213,19 +229,21 @@ bool push_to_queue (void * context, char * password)
   pc_context_t * pc_context = context;
   task_t task;
   strcpy (task.password, password);
+  
   pthread_mutex_lock (&pc_context->tiq_mutex);
   ++pc_context->tiq;
   pthread_mutex_unlock (&pc_context->tiq_mutex);
+  
   queue_push (&pc_context->queue, &task);
-  return (pc_context->result[0]);
+  return (pc_context->result.password[0]);
 }
 
-bool run_multi (config_t * config, char * password)
+void run_multi (config_t * config, char * password)
 {
-  int i, num_cpu = 1; //sysconf (_SC_NPROCESSORS_ONLN);
+  int i, num_cpu = sysconf (_SC_NPROCESSORS_ONLN);
   pc_context_t pc_context;
 
-  pc_context.result[0] = 0;
+  pc_context.result.password[0] = 0;
   pc_context.config = config;
   pc_context.tiq = 0;
   pthread_mutex_init (&pc_context.tiq_mutex, NULL);
@@ -247,9 +265,12 @@ bool run_multi (config_t * config, char * password)
       iter (config, password, push_to_queue, &pc_context);
       break;
     }
-  while (pc_context.tiq != 0);
-  printf ("finish\n");
-  return (false);
+
+  pthread_mutex_lock (&pc_context.tiq_mutex);
+  while (pc_context.tiq != 0)
+    pthread_cond_wait (&pc_context.tiq_cond, &pc_context.tiq_mutex);
+
+  strcpy (password, pc_context.result.password);
 }
 
 int main (int argc, char * argv[])
@@ -267,18 +288,17 @@ int main (int argc, char * argv[])
   char password[config.length + 1];
   password[config.length] = '\0';
 
-  bool found = false;
   switch (config.run_mode)
     {
     case RM_SINGLE:
-      found = run_single (&config, password);
+      run_single (&config, password);
       break;
     case RM_MULTI:
-      found = run_multi (&config, password);
+      run_multi (&config, password);
       break;
     }
 
-  if (found)
+  if (password[0])
     printf ("password  '%s'\n", password);
   else
     printf ("0\n");
