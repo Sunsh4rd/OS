@@ -47,10 +47,10 @@ typedef struct pc_context_t {
   pthread_cond_t tiq_cond;
 } pc_context_t;
 
-typedef struct cp_crypt_special{
+typedef struct cp_crypt_special {
   config_t * config;
   struct crypt_data crypt;
-}cp_crypt_special;
+} cp_crypt_special;
 
 void queue_init (queue_t * queue)
 {
@@ -191,12 +191,16 @@ bool check_password (void * context, char * password)
 
 bool run_single(config_t * config, char * password)
 {
+  struct crypt_data cd = { .initialized = 0 };
+  cp_crypt_special crypt_special;
+  crypt_special.crypt = cd;
+  crypt_special.config = config;
   switch (config -> brute_mode)
     {
     case BM_REC:
-      return (rec_wrapper (config, password, check_password, config));
+      return (rec_wrapper (config, password, check_password, &crypt_special));
     case BM_ITER:
-      return (iter (config, password, check_password, config));
+      return (iter (config, password, check_password, &crypt_special));
     }
   return (false);
 }
@@ -205,12 +209,14 @@ void * consumer (void * arg)
 {
   pc_context_t * pc_context = arg;
   struct crypt_data cd = { .initialized = 0 };
-
+  cp_crypt_special  crypt_special;
+  crypt_special.crypt = cd;
+  crypt_special.config = pc_context -> config;
   for (;;)
     {
       task_t task;
       queue_pop (&pc_context->queue, &task);
-      if (check_password (pc_context->config, task.password)){
+      if (check_password (&crypt_special, task.password)){
 	pc_context->result = task;
       }
 
@@ -241,7 +247,8 @@ bool push_to_queue (void * context, char * password)
 void run_multi (config_t * config, char * password)
 {
   int i, num_cpu = sysconf (_SC_NPROCESSORS_ONLN);
-  pc_context_t pc_context;
+  pc_context_t  pc_context;
+  
 
   pc_context.result.password[0] = 0;
   pc_context.config = config;
