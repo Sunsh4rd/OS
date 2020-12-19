@@ -47,10 +47,10 @@ typedef struct pc_context_t {
   pthread_cond_t tiq_cond;
 } pc_context_t;
 
-typedef struct cp_crypt_special {
-  config_t * config;
+typedef struct cp_crypt_special_t {
+  pc_context_t * context;
   struct crypt_data crypt;
-} cp_crypt_special;
+} cp_crypt_special_t;
 
 void queue_init (queue_t * queue)
 {
@@ -182,19 +182,19 @@ bool print_password (config_t * config, char * password)
 
 bool check_password (void * context, char * password)
 {
-  cp_crypt_special * cp  = context;
-  config_t * config = cp -> config;
-  struct crypt_data cd = cp -> crypt;
-  char * hash = crypt_r (password, config->hash, &cd);
-  return (strcmp (config -> hash, hash) == 0);
+  cp_crypt_special_t * cp  = context;
+  char * hash = crypt_r (password, cp->context->config->hash, &cp->crypt);
+  return (strcmp (cp->context -> config -> hash, hash) == 0);
 }
 
 bool run_single(config_t * config, char * password)
 {
+  // sleep(4);
   struct crypt_data cd = { .initialized = 0 };
-  cp_crypt_special crypt_special;
+  cp_crypt_special_t crypt_special;
+  pc_context_t * pc_context;
+  crypt_special.context = pc_context;
   crypt_special.crypt = cd;
-  crypt_special.config = config;
   switch (config -> brute_mode)
     {
     case BM_REC:
@@ -207,25 +207,29 @@ bool run_single(config_t * config, char * password)
 
 void * consumer (void * arg)
 {
-  pc_context_t * pc_context = arg;
   struct crypt_data cd = { .initialized = 0 };
-  cp_crypt_special  crypt_special;
+  cp_crypt_special_t  crypt_special;
   crypt_special.crypt = cd;
-  crypt_special.config = pc_context -> config;
+  crypt_special.context = arg;
+  config_t * config;
+  config = crypt_special.context -> config;
   for (;;)
     {
       task_t task;
-      queue_pop (&pc_context->queue, &task);
+      queue_pop (&crypt_special.context->queue, &task);
+      task.password[config -> length - 2] = config -> alph[0];
+      task.password[config -> length - 1] = config -> alph[0];
+      printf("%s\n", task.password);
       if (check_password (&crypt_special, task.password)){
-	pc_context->result = task;
+	crypt_special.context->result = task;
       }
 
-      pthread_mutex_lock (&pc_context->tiq_mutex);
-      --pc_context->tiq;
-      pthread_mutex_unlock (&pc_context->tiq_mutex);
+      pthread_mutex_lock (&crypt_special.context->tiq_mutex);
+      --crypt_special.context->tiq;
+      pthread_mutex_unlock (&crypt_special.context->tiq_mutex);
       
-      if (pc_context-> tiq == 0) {
-	pthread_cond_broadcast (&pc_context -> tiq_cond);
+      if (crypt_special.context-> tiq == 0) {
+	pthread_cond_broadcast (&crypt_special.context -> tiq_cond);
       }
     }
 }
@@ -249,13 +253,13 @@ void run_multi (config_t * config, char * password)
   int i, num_cpu = sysconf (_SC_NPROCESSORS_ONLN);
   pc_context_t  pc_context;
   
-
   pc_context.result.password[0] = 0;
   pc_context.config = config;
   pc_context.tiq = 0;
   pthread_mutex_init (&pc_context.tiq_mutex, NULL);
   pthread_cond_init (&pc_context.tiq_cond, NULL);
   queue_init (&pc_context.queue);
+  config -> length = config -> length - 2;
   
   for (i = 0; i < num_cpu; ++i)
     {
