@@ -52,6 +52,16 @@ typedef struct cp_crypt_special_t {
   struct crypt_data crypt;
 } cp_crypt_special_t;
 
+typedef struct cp_crypt_special_t {
+  pc_context_t * context;
+  struct crypt_data crypt;
+} cp_crypt_special_t;
+
+typedef struct cp_crypt_special {
+  config_t * config;
+  struct crypt_data crypt;
+} cp_crypt_special;
+
 void queue_init (queue_t * queue)
 {
   queue -> head = 0;
@@ -195,6 +205,12 @@ bool run_single(config_t * config, char * password)
   pc_context_t * pc_context;
   crypt_special.context = pc_context;
   crypt_special.crypt = cd;
+
+  struct crypt_data cd = { .initialized = 0 };
+  cp_crypt_special crypt_special;
+  crypt_special.crypt = cd;
+  crypt_special.config = config;
+
   switch (config -> brute_mode)
     {
     case BM_REC:
@@ -208,11 +224,13 @@ bool run_single(config_t * config, char * password)
 void * consumer (void * arg)
 {
   struct crypt_data cd = { .initialized = 0 };
+
   cp_crypt_special_t  crypt_special;
   crypt_special.crypt = cd;
   crypt_special.context = arg;
   config_t * config;
   config = crypt_special.context -> config;
+
   for (;;)
     {
       task_t task;
@@ -222,6 +240,27 @@ void * consumer (void * arg)
       printf("%s\n", task.password);
       if (check_password (&crypt_special, task.password)){
 	crypt_special.context->result = task;
+
+  for (;;)
+    {
+      task_t task;
+      queue_pop (&crypt_special.context->queue, &task);
+      task.password[config -> length - 2] = config -> alph[0];
+      task.password[config -> length - 1] = config -> alph[0];
+      printf("%s\n", task.password);
+      if (check_password (&crypt_special, task.password)){
+	crypt_special.context->result = task;
+
+  cp_crypt_special  crypt_special;
+  crypt_special.crypt = cd;
+  crypt_special.config = pc_context -> config;
+  for (;;)
+    {
+      task_t task;
+      queue_pop (&pc_context->queue, &task);
+      if (check_password (&crypt_special, task.password)){
+	pc_context->result = task;
+
       }
 
       pthread_mutex_lock (&crypt_special.context->tiq_mutex);
