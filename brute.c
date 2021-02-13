@@ -47,20 +47,10 @@ typedef struct pc_context_t {
   pthread_cond_t tiq_cond;
 } pc_context_t;
 
-typedef struct cp_crypt_special_t {
-  pc_context_t * context;
+typedef struct crypt_data_t {
+  char * hash;
   struct crypt_data crypt;
-} cp_crypt_special_t;
-
-typedef struct cp_crypt_special_t {
-  pc_context_t * context;
-  struct crypt_data crypt;
-} cp_crypt_special_t;
-
-typedef struct cp_crypt_special {
-  config_t * config;
-  struct crypt_data crypt;
-} cp_crypt_special;
+} crypt_data_t;
 
 void queue_init (queue_t * queue)
 {
@@ -117,12 +107,12 @@ bool rec_wrapper (config_t * config, char * password, password_handler_t passwor
   return (rec (config, password, config -> length, password_handler, context));
 }
 
-bool iter (config_t *  config, char * password, password_handler_t password_handler, void * context)
+bool iter (config_t * config, char * password, password_handler_t password_handler, void * context,int begin, int end)
 {
   int alph_size_1 = strlen(config -> alph) - 1;
   int idx[config -> length];
   int i;
-
+ 
   for (i = 0; i < config -> length; i++)
     {
       idx[i] = 0;
@@ -134,7 +124,7 @@ bool iter (config_t *  config, char * password, password_handler_t password_hand
       if (password_handler (context, password))
 	return (true);
       
-      for (i = config -> length - 1; (i >= 0) && (idx[i] == alph_size_1); i--)
+      for (i = end - 1; (i >= begin) && (idx[i] == alph_size_1); i--)
 	{
 	  idx[i] = 0;
 	  password[i] = config -> alph[0];
@@ -192,84 +182,48 @@ bool print_password (config_t * config, char * password)
 
 bool check_password (void * context, char * password)
 {
-  cp_crypt_special_t * cp  = context;
-  char * hash = crypt_r (password, cp->context->config->hash, &cp->crypt);
-  return (strcmp (cp->context -> config -> hash, hash) == 0);
+  crypt_data_t * crypt_data = context;
+  char * hash = crypt_r (password, crypt_data->hash, &crypt_data->crypt);
+  return (strcmp (crypt_data -> hash, hash) == 0);
 }
 
-bool run_single(config_t * config, char * password)
+bool run_single (config_t * config, char * password)
 {
-  // sleep(4);
-  struct crypt_data cd = { .initialized = 0 };
-  cp_crypt_special_t crypt_special;
-  pc_context_t * pc_context;
-  crypt_special.context = pc_context;
-  crypt_special.crypt = cd;
-
-  struct crypt_data cd = { .initialized = 0 };
-  cp_crypt_special crypt_special;
-  crypt_special.crypt = cd;
-  crypt_special.config = config;
+  crypt_data_t crypt_data;
+  crypt_data.crypt.initialized = 0;
+  crypt_data.hash = config->hash;
 
   switch (config -> brute_mode)
     {
     case BM_REC:
-      return (rec_wrapper (config, password, check_password, &crypt_special));
+      return (rec_wrapper (config, password, check_password, &crypt_data));
     case BM_ITER:
-      return (iter (config, password, check_password, &crypt_special));
+      return (iter (config, password, check_password, &crypt_data, 0, config -> length));
     }
   return (false);
 }
 
 void * consumer (void * arg)
 {
-  struct crypt_data cd = { .initialized = 0 };
-
-  cp_crypt_special_t  crypt_special;
-  crypt_special.crypt = cd;
-  crypt_special.context = arg;
-  config_t * config;
-  config = crypt_special.context -> config;
-
+  pc_context_t * pc_context = arg;
+  crypt_data_t crypt_data;
+  crypt_data.crypt.initialized = 0;
+  crypt_data.hash = pc_context->config->hash;
+  
   for (;;)
     {
       task_t task;
-      queue_pop (&crypt_special.context->queue, &task);
-      task.password[config -> length - 2] = config -> alph[0];
-      task.password[config -> length - 1] = config -> alph[0];
-      printf("%s\n", task.password);
-      if (check_password (&crypt_special, task.password)){
-	crypt_special.context->result = task;
-
-  for (;;)
-    {
-      task_t task;
-      queue_pop (&crypt_special.context->queue, &task);
-      task.password[config -> length - 2] = config -> alph[0];
-      task.password[config -> length - 1] = config -> alph[0];
-      printf("%s\n", task.password);
-      if (check_password (&crypt_special, task.password)){
-	crypt_special.context->result = task;
-
-  cp_crypt_special  crypt_special;
-  crypt_special.crypt = cd;
-  crypt_special.config = pc_context -> config;
-  for (;;)
-    {
-      task_t task;
-      queue_pop (&pc_context->queue, &task);
-      if (check_password (&crypt_special, task.password)){
-	pc_context->result = task;
-
-      }
-
-      pthread_mutex_lock (&crypt_special.context->tiq_mutex);
-      --crypt_special.context->tiq;
-      pthread_mutex_unlock (&crypt_special.context->tiq_mutex);
+      queue_pop (&pc_context -> queue, &task);
       
-      if (crypt_special.context-> tiq == 0) {
-	pthread_cond_broadcast (&crypt_special.context -> tiq_cond);
-      }
+      if (check_password (&crypt_data, task.password))
+	pc_context -> result = task;
+
+      pthread_mutex_lock (&pc_context -> tiq_mutex);
+      --pc_context -> tiq;
+      pthread_mutex_unlock (&pc_context -> tiq_mutex);
+      
+      if (pc_context-> tiq == 0)
+	pthread_cond_broadcast (&pc_context -> tiq_cond);
     }
 }
 
@@ -298,8 +252,7 @@ void run_multi (config_t * config, char * password)
   pthread_mutex_init (&pc_context.tiq_mutex, NULL);
   pthread_cond_init (&pc_context.tiq_cond, NULL);
   queue_init (&pc_context.queue);
-  config -> length = config -> length - 2;
-  
+   
   for (i = 0; i < num_cpu; ++i)
     {
       pthread_t id;
@@ -312,7 +265,7 @@ void run_multi (config_t * config, char * password)
       rec_wrapper (config, password, push_to_queue, &pc_context);
       break;
     case BM_ITER:
-      iter (config, password, push_to_queue, &pc_context);
+      iter (config, password, push_to_queue, &pc_context, );
       break;
     }
 
