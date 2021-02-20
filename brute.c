@@ -27,8 +27,11 @@ typedef struct config_t {
   run_mode_t run_mode;
 } config_t;
 
+#define PASSWORD_LENGTH 8
+
 typedef struct task_t {
-  char password[8];
+  char password[PASSWORD_LENGTH];
+  int from, to;
 } task_t;
 
 typedef struct queue_t {
@@ -85,35 +88,35 @@ void queue_pop (queue_t * queue, task_t * task)
   sem_post (&queue -> empty);
 }
 
-typedef bool (*password_handler_t) (void * context, char * password);
+typedef bool (*password_handler_t) (void * context, task_t * task);
 
-bool rec (config_t * config, char * password, int pos, password_handler_t password_handler, void * context)
+bool rec (config_t * config, task_t * task, int pos, password_handler_t password_handler, void * context)
 { 
   int i;
-  if ((--pos) < 0)
-    return (password_handler (context, password));
+  if ((--pos) < task -> to)
+    return (password_handler (context, task));
   else
-    for (i = 0; config -> alph[i]; i++)
+    for (i = task -> from; config -> alph[i]; i++)
       {
 	password[pos] = config -> alph[i];
-	if (rec (config, password, pos, password_handler, context))
+	if (rec (config, task -> from, pos, password_handler, context))
 	  return (true);
       }
   return (false);
 }
 
-bool rec_wrapper (config_t * config, char * password, password_handler_t password_handler, void * context)
+bool rec_wrapper (config_t * config, task_t * task, password_handler_t password_handler, void * context)
 {
-  return (rec (config, password, config -> length, password_handler, context));
+  return (rec (config, task, config -> length, password_handler, context));
 }
 
-bool iter (config_t * config, char * password, password_handler_t password_handler, void * context,int begin, int end)
+bool iter (config_t * config, task_t * task, password_handler_t password_handler, void * context, int from, int to)
 {
   int alph_size_1 = strlen(config -> alph) - 1;
   int idx[config -> length];
   int i;
  
-  for (i = 0; i < config -> length; i++)
+  for (i = to; i < from; i++)
     {
       idx[i] = 0;
       password[i] = config -> alph[0];
@@ -124,15 +127,16 @@ bool iter (config_t * config, char * password, password_handler_t password_handl
       if (password_handler (context, password))
 	return (true);
       
-      for (i = end - 1; (i >= begin) && (idx[i] == alph_size_1); i--)
+      for (i = from - 1; (i >= to) && (idx[i] == alph_size_1); i--)
 	{
 	  idx[i] = 0;
 	  password[i] = config -> alph[0];
 	}
-      
-      if (i < 0)
+      if (i < to)
 	return (false);
+      printf("%d", i);
       password[i] = config -> alph[++idx[i]];
+      printf("%s\n", password);
     }
 }
 
@@ -141,7 +145,7 @@ void parse_paras (config_t * config, int argc, char * argv[])
   int opt;
   brute_mode_t mode;
   run_mode_t run;
-  while ((opt = getopt (argc, argv, "a:l:h:irsm")) != -1)
+  while ((opt = getopt (argc, argv, "a:l:h:irsmf")) != -1)
     {
       switch (opt)
 	{
@@ -170,24 +174,27 @@ void parse_paras (config_t * config, int argc, char * argv[])
 	  run = RM_MULTI;
 	  config -> run_mode = run;
 	  break;
+	case 'f':
+	  config -> from = atoi (optarg);
+	  break;
 	}
     }
 }
 
-bool print_password (config_t * config, char * password)
+bool print_password (config_t * config, task_t * task)
 {
   printf ("%s\n", password);
   return (false);
 }
 
-bool check_password (void * context, char * password)
+bool check_password (void * context, task_t * task)
 {
   crypt_data_t * crypt_data = context;
   char * hash = crypt_r (password, crypt_data->hash, &crypt_data->crypt);
   return (strcmp (crypt_data -> hash, hash) == 0);
 }
 
-bool run_single (config_t * config, char * password)
+bool run_single (config_t * config, task_t * task)
 {
   crypt_data_t crypt_data;
   crypt_data.crypt.initialized = 0;
@@ -198,7 +205,7 @@ bool run_single (config_t * config, char * password)
     case BM_REC:
       return (rec_wrapper (config, password, check_password, &crypt_data));
     case BM_ITER:
-      return (iter (config, password, check_password, &crypt_data, 0, config -> length));
+      return (iter (config, password, check_password, &crypt_data, config -> length, 0));
     }
   return (false);
 }
@@ -214,6 +221,16 @@ void * consumer (void * arg)
     {
       task_t task;
       queue_pop (&pc_context -> queue, &task);
+
+      switch (pc_context -> config -> brute_mode)
+	{
+	case BM_REC:
+	  rec_wrapper (pc_context -> config, &task.password, check_password, &pc_context);
+	  break;
+	case BM_ITER:
+	  iter (pc_context -> config, &task.password, check_password, &pc_context);
+	  break;
+	}
       
       if (check_password (&crypt_data, task.password))
 	pc_context -> result = task;
@@ -227,7 +244,7 @@ void * consumer (void * arg)
     }
 }
 
-bool push_to_queue (void * context, char * password)
+bool push_to_queue (void * context, task_t * task)
 {
   pc_context_t * pc_context = context;
   task_t task;
@@ -241,7 +258,7 @@ bool push_to_queue (void * context, char * password)
   return (pc_context->result.password[0]);
 }
 
-void run_multi (config_t * config, char * password)
+void run_multi (config_t * config, task_t * task)
 {
   int i, num_cpu = sysconf (_SC_NPROCESSORS_ONLN);
   pc_context_t  pc_context;
@@ -265,7 +282,7 @@ void run_multi (config_t * config, char * password)
       rec_wrapper (config, password, push_to_queue, &pc_context);
       break;
     case BM_ITER:
-      iter (config, password, push_to_queue, &pc_context, );
+      iter (config, password, push_to_queue, &pc_context, config -> from, 0);
       break;
     }
 
