@@ -44,7 +44,7 @@ typedef struct queue_t {
 typedef struct pc_context_t {
   config_t * config;
   queue_t queue;
-  task_t result;
+  task_t * result;
   int tiq;
   pthread_mutex_t tiq_mutex;
   pthread_cond_t tiq_cond;
@@ -90,53 +90,53 @@ void queue_pop (queue_t * queue, task_t * task)
 
 typedef bool (*password_handler_t) (void * context, task_t * task);
 
-bool rec (config_t * config, task_t * task, int pos, password_handler_t password_handler, void * context)
+bool rec (config_t * config, task_t * task, password_handler_t password_handler, void * context)
 { 
   int i;
-  if ((--pos) < task -> to)
+  if ((--task -> to) < task -> from)
     return (password_handler (context, task));
   else
     for (i = task -> from; config -> alph[i]; i++)
       {
-	password[pos] = config -> alph[i];
-	if (rec (config, task -> from, pos, password_handler, context))
+	task -> password[task -> from] = config -> alph[i];
+	if (rec (config, task, password_handler, context))
 	  return (true);
       }
   return (false);
 }
 
-bool rec_wrapper (config_t * config, task_t * task, password_handler_t password_handler, void * context)
+bool rec_wrapper (config_t * config, task_t * task, password_handler_t password_handler, void  * context)
 {
-  return (rec (config, task, config -> length, password_handler, context));
+  return (rec (config, task, password_handler, context));
 }
 
-bool iter (config_t * config, task_t * task, password_handler_t password_handler, void * context, int from, int to)
+bool iter (config_t * config, task_t * task, password_handler_t password_handler, void  * context)
 {
   int alph_size_1 = strlen(config -> alph) - 1;
   int idx[config -> length];
   int i;
  
-  for (i = to; i < from; i++)
+  for (i = task -> from; i < task -> to; i++)
     {
       idx[i] = 0;
-      password[i] = config -> alph[0];
+      task -> password[i] = config -> alph[0];
     }
   
   for (;;)
     {
-      if (password_handler (context, password))
+      if (password_handler (context, task)){
 	return (true);
+      }
       
-      for (i = from - 1; (i >= to) && (idx[i] == alph_size_1); i--)
+      for (i = task -> to - 1; (i >= task -> from) && (idx[i] == alph_size_1); i--)
 	{
 	  idx[i] = 0;
-	  password[i] = config -> alph[0];
+	  task -> password[i] = config -> alph[0];
 	}
-      if (i < to)
+      if (i < task -> from)
 	return (false);
-      printf("%d", i);
-      password[i] = config -> alph[++idx[i]];
-      printf("%s\n", password);
+      task -> password[i] = config -> alph[++idx[i]];
+      printf("%s\n", task -> password);
     }
 }
 
@@ -174,23 +174,20 @@ void parse_paras (config_t * config, int argc, char * argv[])
 	  run = RM_MULTI;
 	  config -> run_mode = run;
 	  break;
-	case 'f':
-	  config -> from = atoi (optarg);
-	  break;
 	}
     }
 }
 
 bool print_password (config_t * config, task_t * task)
 {
-  printf ("%s\n", password);
+  printf ("%s\n", task -> password);
   return (false);
 }
 
 bool check_password (void * context, task_t * task)
 {
   crypt_data_t * crypt_data = context;
-  char * hash = crypt_r (password, crypt_data->hash, &crypt_data->crypt);
+  char * hash = crypt_r (task -> password, crypt_data->hash, &crypt_data->crypt);
   return (strcmp (crypt_data -> hash, hash) == 0);
 }
 
@@ -203,9 +200,9 @@ bool run_single (config_t * config, task_t * task)
   switch (config -> brute_mode)
     {
     case BM_REC:
-      return (rec_wrapper (config, password, check_password, &crypt_data));
+      return (rec_wrapper (config, task, check_password, &crypt_data));
     case BM_ITER:
-      return (iter (config, password, check_password, &crypt_data, config -> length, 0));
+      return (iter (config, task, check_password, &crypt_data));
     }
   return (false);
 }
@@ -220,20 +217,19 @@ void * consumer (void * arg)
   for (;;)
     {
       task_t task;
+      task.from = 0;
+      task.to = pc_context -> config -> length / 2;
       queue_pop (&pc_context -> queue, &task);
 
       switch (pc_context -> config -> brute_mode)
 	{
 	case BM_REC:
-	  rec_wrapper (pc_context -> config, &task.password, check_password, &pc_context);
+	  rec_wrapper (pc_context -> config, &task, check_password, &crypt_data);
 	  break;
 	case BM_ITER:
-	  iter (pc_context -> config, &task.password, check_password, &pc_context);
-	  break;
+	  iter (pc_context -> config, &task, check_password, &crypt_data);
+     	  break;
 	}
-      
-      if (check_password (&crypt_data, task.password))
-	pc_context -> result = task;
 
       pthread_mutex_lock (&pc_context -> tiq_mutex);
       --pc_context -> tiq;
@@ -247,15 +243,13 @@ void * consumer (void * arg)
 bool push_to_queue (void * context, task_t * task)
 {
   pc_context_t * pc_context = context;
-  task_t task;
-  strcpy (task.password, password);
   
   pthread_mutex_lock (&pc_context->tiq_mutex);
   ++pc_context->tiq;
   pthread_mutex_unlock (&pc_context->tiq_mutex);
   
-  queue_push (&pc_context->queue, &task);
-  return (pc_context->result.password[0]);
+  queue_push (&pc_context->queue, task);
+  return (pc_context->result -> password[0]);
 }
 
 void run_multi (config_t * config, task_t * task)
@@ -263,12 +257,14 @@ void run_multi (config_t * config, task_t * task)
   int i, num_cpu = sysconf (_SC_NPROCESSORS_ONLN);
   pc_context_t  pc_context;
   
-  pc_context.result.password[0] = 0;
+  pc_context.result -> password[0] = 0;
   pc_context.config = config;
   pc_context.tiq = 0;
   pthread_mutex_init (&pc_context.tiq_mutex, NULL);
   pthread_cond_init (&pc_context.tiq_cond, NULL);
   queue_init (&pc_context.queue);
+  task_t * task_copy = task;
+  task_copy -> from = task_copy -> to / 2; 
    
   for (i = 0; i < num_cpu; ++i)
     {
@@ -279,10 +275,10 @@ void run_multi (config_t * config, task_t * task)
   switch (config -> brute_mode)
     {
     case BM_REC:
-      rec_wrapper (config, password, push_to_queue, &pc_context);
+      rec_wrapper (config, task_copy, push_to_queue, &pc_context);
       break;
     case BM_ITER:
-      iter (config, password, push_to_queue, &pc_context, config -> from, 0);
+      iter (config, task_copy, push_to_queue, &pc_context);
       break;
     }
 
@@ -290,8 +286,7 @@ void run_multi (config_t * config, task_t * task)
   while (pc_context.tiq != 0)
     pthread_cond_wait (&pc_context.tiq_cond, &pc_context.tiq_mutex);
 
-  strcpy (password, pc_context.result.password);
-}
+ }
 
 int main (int argc, char * argv[])
 {
@@ -307,21 +302,27 @@ int main (int argc, char * argv[])
   parse_paras (&config, argc, argv);
   char password[config.length + 1];
   password[config.length] = '\0';
+  task_t task =
+    {
+     .password = password,
+     .from = 0,
+     .to = config.length,
+    };
 
   switch (config.run_mode)
     {
     case RM_SINGLE:
-      run_single (&config, password);
+      run_single (&config, &task);
       break;
     case RM_MULTI:
-      run_multi (&config, password);
+      run_multi (&config, &task);
       break;
     }
 
-  if (password[0])
-    printf ("password  '%s'\n", password);
+  if (task.password[0])
+    printf ("password  '%s'\n", task.password);
   else
     printf ("0\n");
   
-  return (0); 
+  return (0);
 }
