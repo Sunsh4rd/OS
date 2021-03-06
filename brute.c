@@ -143,8 +143,6 @@ bool iter (config_t * config, task_t * task, password_handler_t password_handler
 void parse_paras (config_t * config, int argc, char * argv[])
 {
   int opt;
-  brute_mode_t mode;
-  run_mode_t run;
   while ((opt = getopt (argc, argv, "a:l:h:irsmf")) != -1)
     {
       switch (opt)
@@ -159,20 +157,16 @@ void parse_paras (config_t * config, int argc, char * argv[])
 	  config -> hash = optarg;
 	  break;
 	case 'i':
-	  mode = BM_ITER;
-	  config -> brute_mode = mode;
+	  config -> brute_mode = BM_ITER;
 	  break;
 	case 'r':
-	  mode = BM_REC;
-	  config -> brute_mode = mode;
+	  config -> brute_mode = BM_REC;
 	  break;
 	case 's':
-	  run = RM_SINGLE;
-	  config -> run_mode = run;
+	  config -> run_mode = RM_SINGLE;
 	  break;
 	case 'm':
-	  run = RM_MULTI;
-	  config -> run_mode = run;
+	  config -> run_mode = RM_MULTI;
 	  break;
 	}
     }
@@ -304,7 +298,7 @@ int main (int argc, char * argv[])
   password[config.length] = '\0';
   task_t task =
     {
-     .password = password,
+     .password = password[0],
      .from = 0,
      .to = config.length,
     };
@@ -323,6 +317,6 @@ int main (int argc, char * argv[])
     printf ("password  '%s'\n", task.password);
   else
     printf ("0\n");
-  
+
   return (0);
 }
