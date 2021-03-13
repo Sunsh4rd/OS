@@ -115,35 +115,35 @@ bool iter (config_t * config, task_t * task, password_handler_t password_handler
   int alph_size_1 = strlen(config -> alph) - 1;
   int idx[config -> length];
   int i;
- 
+  
+
   for (i = task -> from; i < task -> to; i++)
     {
       idx[i] = 0;
       task -> password[i] = config -> alph[0];
     }
-  
   for (;;)
     {
-      if (password_handler (context, task)){
+      printf("%s\n", task -> password);
+      if (password_handler (context, task)) {
 	return (true);
-      }
-      
+      } 
       for (i = task -> to - 1; (i >= task -> from) && (idx[i] == alph_size_1); i--)
 	{
+	
 	  idx[i] = 0;
 	  task -> password[i] = config -> alph[0];
 	}
       if (i < task -> from)
 	return (false);
       task -> password[i] = config -> alph[++idx[i]];
-      printf("%s\n", task -> password);
     }
 }
 
 void parse_paras (config_t * config, int argc, char * argv[])
 {
   int opt;
-  while ((opt = getopt (argc, argv, "a:l:h:irsmf")) != -1)
+  while ((opt = getopt (argc, argv, "a:l:h:irsm")) != -1)
     {
       switch (opt)
 	{
@@ -182,6 +182,7 @@ bool check_password (void * context, task_t * task)
 {
   crypt_data_t * crypt_data = context;
   char * hash = crypt_r (task -> password, crypt_data->hash, &crypt_data->crypt);
+  printf("check\n");
   return (strcmp (crypt_data -> hash, hash) == 0);
 }
 
@@ -207,14 +208,12 @@ void * consumer (void * arg)
   crypt_data_t crypt_data;
   crypt_data.crypt.initialized = 0;
   crypt_data.hash = pc_context->config->hash;
-  
   for (;;)
     {
       task_t task;
-      task.from = 0;
-      task.to = pc_context -> config -> length / 2;
       queue_pop (&pc_context -> queue, &task);
-
+      task.to = task.from;
+      task.from = 0;
       switch (pc_context -> config -> brute_mode)
 	{
 	case BM_REC:
@@ -241,7 +240,7 @@ bool push_to_queue (void * context, task_t * task)
   pthread_mutex_lock (&pc_context->tiq_mutex);
   ++pc_context->tiq;
   pthread_mutex_unlock (&pc_context->tiq_mutex);
-  
+  printf("push\n");
   queue_push (&pc_context->queue, task);
   return (pc_context->result -> password[0]);
 }
@@ -249,7 +248,7 @@ bool push_to_queue (void * context, task_t * task)
 void run_multi (config_t * config, task_t * task)
 {
   int i, num_cpu = sysconf (_SC_NPROCESSORS_ONLN);
-  pc_context_t  pc_context;
+  pc_context_t pc_context;
   
   pc_context.result -> password[0] = 0;
   pc_context.config = config;
@@ -257,22 +256,21 @@ void run_multi (config_t * config, task_t * task)
   pthread_mutex_init (&pc_context.tiq_mutex, NULL);
   pthread_cond_init (&pc_context.tiq_cond, NULL);
   queue_init (&pc_context.queue);
-  task_t * task_copy = task;
-  task_copy -> from = task_copy -> to / 2; 
+  task -> from = task -> to / 2; 
    
   for (i = 0; i < num_cpu; ++i)
-    {
-      pthread_t id;
-      pthread_create (&id, NULL, consumer, &pc_context);
-    }
+     {
+       pthread_t id;
+       pthread_create (&id, NULL, consumer, &pc_context);
+     }
 
   switch (config -> brute_mode)
     {
     case BM_REC:
-      rec_wrapper (config, task_copy, push_to_queue, &pc_context);
+      rec_wrapper (config, task, push_to_queue, &pc_context);
       break;
     case BM_ITER:
-      iter (config, task_copy, push_to_queue, &pc_context);
+      iter (config, task, push_to_queue, &pc_context);
       break;
     }
 
@@ -288,8 +286,9 @@ int main (int argc, char * argv[])
     {
      .brute_mode = BM_ITER,
      .length = 3,
-     .alph = "0123456789",
-     .hash = "wHtCXhpDbCnLI",
+     .alph = "02",
+     .hash = "hFgMjGhFhjGfk",
+     //.hash = "wHtCXhpDbCnLI",
      .run_mode = RM_SINGLE,
     };
   
@@ -302,7 +301,6 @@ int main (int argc, char * argv[])
      .from = 0,
      .to = config.length,
     };
-
   switch (config.run_mode)
     {
     case RM_SINGLE:
@@ -314,9 +312,9 @@ int main (int argc, char * argv[])
     }
 
   if (task.password[0])
-    printf ("password  '%s'\n", task.password);
+     printf ("password  '%s'\n", task.password);
   else
-    printf ("0\n");
+     printf ("0\n");
 
   return (0);
 }
