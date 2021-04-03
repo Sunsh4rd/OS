@@ -11,13 +11,13 @@ typedef enum
   {
    BM_ITER,
    BM_REC,
-   BM_ITERATOR,
   } brute_mode_t;
 
 typedef enum run_mode_t
   {
    RM_SINGLE,
    RM_MULTI,
+   RM_GEN,
   } run_mode_t;
 
 typedef struct config_t {
@@ -69,6 +69,8 @@ typedef struct iterator_t {
   iter_state_t iter_state;
   pthread_mutex_t mutex;
   bool finished;
+  config_t * config;
+  password_t result;
 } iterator_t;
 
 void queue_init (queue_t * queue)
@@ -103,6 +105,15 @@ void queue_pop (queue_t * queue, task_t * task)
   pthread_mutex_unlock (&queue -> head_mutex);
   sem_post (&queue -> empty);
 }
+
+bool check_password (void * context, task_t * task)
+{
+  crypt_data_t * crypt_data = context;
+  char * hash = crypt_r (task -> password, crypt_data->hash, &crypt_data->crypt);
+  return (strcmp (crypt_data -> hash, hash) == 0);
+}
+
+
 
 typedef bool (*password_handler_t) (void * context, task_t * task);
 
@@ -178,41 +189,48 @@ bool iter (config_t * config, task_t * task, password_handler_t password_handler
 
 void *  iterator_worker (void * arg)
 {
-  iterator_t * iterator = arg;  
+  iterator_t * iterator = arg;
+  crypt_data_t crypt_data;
+
+  crypt_data.hash = iterator->config->hash;
+  crypt_data.crypt.initialized = 0;
+  
   for (;;)
     {
       task_t task;
       bool finished;
-      pthread_mutex_lock (&iterator.mutex);
-      finished = iterator->finished;
+      pthread_mutex_lock (&iterator -> mutex);
+      finished = iterator -> finished;
       if (!finished)
 	{
-	  task = *iterator->iter_state.task;
-	  iterator->finished = iter_state_next (&iterator->iter_state);
+	  task = *iterator -> iter_state.task;
+	  iterator -> finished = !iter_state_next (&iterator -> iter_state);
 	}
-      pthread_mutex_unlock (&iterator.mutex);
+      pthread_mutex_unlock (&iterator -> mutex);
       
       if (finished)
 	break;
+      
       if (check_password (&crypt_data, &task)) {
-	iterator->finished = true;
-	memcpy (iterator -> result, task -> password, sizeof (iterator->result));
+	iterator -> finished = true;
+	memcpy (&iterator -> result, task.password, sizeof (iterator -> result));
       }
     }
+  
+  return (NULL);
 }
 
-
 bool iterator (config_t * config, task_t * task, password_handler_t password_handler, void * context) {
-  iter_state_t iter_state;
-
   int i,  num_cpu = sysconf (_SC_NPROCESSORS_ONLN);
   pthread_t id [num_cpu];
   iterator_t iterator;
 
+  iterator.config = config;
   iter_state_init (&iterator.iter_state, config, task);
   pthread_mutex_init (&iterator.mutex, NULL);
+  iterator.result[0] = 0;
   iterator.finished = false;
-
+  
   for (i = 0; i < num_cpu; i++) {
     pthread_create (&id[i], NULL, iterator_worker, &iterator);
   }
@@ -220,6 +238,9 @@ bool iterator (config_t * config, task_t * task, password_handler_t password_han
 
   for (i = 0; i < num_cpu; ++i)
     pthread_join (id[i], NULL);
+
+  memcpy (task->password, iterator.result, sizeof (iterator.result));
+  return (task->password[0]);
 }
 
 void parse_paras (config_t * config, int argc, char * argv[])
@@ -251,7 +272,7 @@ void parse_paras (config_t * config, int argc, char * argv[])
 	  config -> run_mode = RM_MULTI;
 	  break;
 	case 't':
-	  config -> brute_mode = BM_ITERATOR;
+	  config -> run_mode = RM_GEN;
 	  break;	  
 	}
     }
@@ -266,15 +287,7 @@ bool print_password (config_t * config, task_t * task)
 }
 
 
-bool check_password (void * context, task_t * task)
-{
-  crypt_data_t * crypt_data = context;
-  char * hash = crypt_r (task -> password, crypt_data->hash, &crypt_data->crypt);
-  return (strcmp (crypt_data -> hash, hash) == 0);
-}
-
-
-bool run_single (config_t * config, task_t * task)
+void run_single (config_t * config, task_t * task)
 {
   crypt_data_t crypt_data;
   crypt_data.crypt.initialized = 0;
@@ -283,11 +296,12 @@ bool run_single (config_t * config, task_t * task)
   switch (config -> brute_mode)
     {
     case BM_REC:
-      return (rec_wrapper (config, task, check_password, &crypt_data));
+      (rec_wrapper (config, task, check_password, &crypt_data));
+      break;
     case BM_ITER:
-      return (iter (config, task, check_password, &crypt_data));
+     (iter (config, task, check_password, &crypt_data));
+     break;
     }
-  return (false);
 }
 
 void * consumer (void * arg)
@@ -312,9 +326,6 @@ void * consumer (void * arg)
 	case BM_ITER:
 	  found = iter (pc_context -> config, &task, check_password, &crypt_data);
      	  break;
-	case BM_ITERATOR:
-	  found = iterator (pc_context -> config, &task, check_password, &crypt_data);
-	  break;
 	}
 
       if (found)
@@ -365,9 +376,6 @@ void run_multi (config_t * config, task_t * task)
     case BM_ITER:
       iter (config, task, push_to_queue, &pc_context);
       break;
-    case BM_ITERATOR:
-      iterator(config, task,  push_to_queue, &pc_context);
-      break;
     }
 
   pthread_mutex_lock (&pc_context.tiq_mutex);
@@ -381,6 +389,14 @@ void run_multi (config_t * config, task_t * task)
     }
   strcpy (task->password, pc_context.result);
  }
+
+void run_gen (config_t * config, task_t * task) {
+  crypt_data_t crypt_data;
+  crypt_data.crypt.initialized = 0;
+  crypt_data.hash = config->hash;
+  iterator (config, task, check_password, &crypt_data);
+}
+  
 
 int main (int argc, char * argv[])
 {
@@ -409,6 +425,9 @@ int main (int argc, char * argv[])
       break;
     case RM_MULTI:
       run_multi (&config, &task);
+      break;
+    case RM_GEN:
+      run_gen (&config, &task);
       break;
     }
 
